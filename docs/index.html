@@ -115,7 +115,7 @@
         <h1>Skew Resilient Real Time Streaming Vector Search Database</h1>
         <h2>Authors: Arjuna Bazaz and Liu</h2>
         <h3>Carnegie Mellon School of Computer Science</h3>
-        <h3>Self Link: https://arjunabazaz.github.io/LIVE-ANN/</h3>
+        <h3>Self Link: https://arjunabazaz.github.io/LIVE-ANN-Webpage/</h3>
     </header>
 
 <section>
@@ -216,6 +216,94 @@
     </section>
 
     <section>
+        <h2>Midpoint Progress</h2>
+        <p>
+            Accessed clusters from SIFT1M and extracted them. Using the binary file, we ran k-means clustering to generate
+            clusters using the L2 distance on a subset of points. Afterwards, we mapped the rest of the points to the clusters that we generated.
+            The clusters were also reformatted and packed again into a workable format for the IVF, with clusters packed in an array and centroid position metadata.
+        </p>
+        <p>
+            Wrote a static IVF baseline that only handles queries. Structures the points in a packed array and uses a metadata array of centroids to find the offset of the cluster to search.
+            Afterwards we wrote code to handle a dynamic IVF scheme by separating clusters into separate vectors. Each vector uses a RWLock, where reads grab the read locks and
+            inserts and deletes grab the write lock. For deletes, rather than moving things in the vector, we insert a tombstone, and increment a tombstone counter. For writes, we add a point
+            to the end of the cluster if there is no tombstones. If there are tombstones, we replace the tombstone with the new point.
+        </p>
+        <p>
+            The next step was to add parallelism to the CPU IVF. To do this, we took three approaches. Firstly, we added vectorized instructions.
+            For the L2 distance calculation, calculations are done across 128 consecutive floats, meaning 512 consecutive bytes. Using 256 bit vectorized registers (32 bytes),
+            we can handles the L2 distance calculations in just 16 steps. This improved performance by 4x on insert only workloads (the reduce parallelism likely due to calculations beyond the L2 distance).
+            Afterwards, we implemented a shared address space request level parallel approach. This handles parallelism by splitting up requests between processors. Each request is fully handled by a single processor.
+            This implementation led to speedups of 3-4x when running on 8 threads. However, this would work solely if the clusters fit in memory, which is not guaranteed on large systems.
+        </p>
+        <p>
+            To address this, we developed an MPI approach that keeps clusters local to specific processors. When a request comes into a specific processor. It determines the clusters to examine, and then sends the request to handle to a specific
+            processor, and gets the results back using MPI messages. This acheives roughly 50% the throughput of the shared address space approach, since communicating entire 512 byte points are expensive.
+            Speedup graphs showing results are below.
+        </p>
+        <img src="img/Shared Memory - Speedup Chart based on Skew.png" alt="Shared Memory">
+        <img src="img/Shared Memory - Speedup Chart based on Skew_2.png" alt="Shared Memory 2">
+        <p>
+            We also did specific testing for high skew workloads, since requests often come in to specific clusters, we decided to generate workloads using a high zipfian skew.
+            This produced results that often access a single cluster. This degrades performance in the shared address space case as a result of lock contention, and reduces parallelism
+            in the message passing case as a result of a single process getting an unequal share of the work. Results are in the graphs below.
+        </p>
+        <img src="img/Message Passing IVF Skew Analysis.png" alt="Message Passing">
+        <img src="img/Message Passing IVF Skew Analysis_2.png" alt="Message Passing 2">
+        <p>
+            We also acheived a baseline version of GPU IVF. To do this, we started with a system that has a block size of 1, where 1 block handles 1 query.
+            This is needed to ensure that locking functions, since multiple threads within a block can run concurrently, preventing synchronyzation. However,
+            this produced greatly reduced parallelism, with a throughput on an RTX 2080 ti at 15% of single threaded CPU implementation.
+            To combat this, we added a new solution where blocks are assigned to a single warp. Since warps work in tandem, each warp handle a query. This improved
+            performance by 29.7x for workloads with no skew.
+        </p>
+        <img src="GPU IVF Throughput.png" alt="GPU IVF Throughput">
+    </section>
+
+    <section>
+        <h2>Goals and Deliverables (Updated)</h2>
+        
+        <h3>Achieved</h3>
+        <ul>
+            <li>Ingest cluster points</li>
+            <li>perform k-means clustering</li>
+            <li>Wrote static IVF</li>
+            <li>Wrote dynamic CPU IVF</li>
+            <li>Wrote OpenMP shared address space parallel CPU IVF</li>
+            <li>Wrote MPI CPU IVF</li>
+            <li>Wrote fine grained locking shared address space CPU IVF</li>
+            <li>Develop skew based testing for benchmark</li>
+            <li>Wrote baseline GPU dynamic IVF</li>
+        </ul>
+
+        <h3>Intend to Achieve</h3>
+        <ul>
+            <li>Perform work stealing MPI CPU IVF</li>
+            <li>Write fine grained GPU IVF</li>
+            <li>Write skew handling GPU IVF</li>
+            <li>Test under extreme skew</li>
+        </ul>
+
+        <h3>Uncertain of whether it will be acheived</h3>
+        <ul>
+            <li>Multi-GPU IVF - Testing will be difficult.</li>
+        </ul>
+
+        <h3>Poster/Video Deliverables</h3>
+        <ul>
+            <li>Graphs for performance vs skew for MPI CPU, GPU, and shared address space CPU</li>
+            <li>Graphs for performance based on different workload settings</li>
+        </ul>
+    </section>
+
+    <section>
+        <h2>Concerns</h2>
+        <p>
+            Worried that the project might be going in too many directions by focusing on both the CPU and GPU versions.
+            It might be better to focus on handling the workload skew issue for CPU IVF and improving the message passing version.
+        </p>
+    </section>
+
+    <section>
         <h2>Schedule</h2>
         <table>
             <thead>
@@ -231,23 +319,27 @@
                 </tr>
                 <tr>
                     <td><strong>Week 2 (November 8th - November 14th)</strong></td>
-                    <td>Create GPU accelerated IVF and naive dynamic streaming IVF.</td>
+                    <td>Create CPU Dynamic IVF OpenMP and MPI IVF.</td>
                 </tr>
                 <tr>
                     <td><strong>Week 3 (November 15th - November 21st)</strong></td>
-                    <td>Benchmark dynamic streaming IVF. Implement block based memory allocation scheme, lock free queue, and workload allocator.</td>
+                    <td>Benchmark dynamic streaming CPU IVF. Write GPU IVF. Implement block based memory allocation scheme, lock free queue, and workload allocator.</td>
                 </tr>
                 <tr>
                     <td><strong>Milestone (November 23rd)</strong></td>
                     <td>Submit Milestone Report.</td>
                 </tr>
                 <tr>
-                    <td><strong>Week 4 (November 22nd - November 28th)</strong></td>
-                    <td>Test under extreme skew. Add delete compactor thread and write buffer for skew handling.</td>
+                    <td><strong>Week 4 (November 22nd - November 25th, short week due to Thanksgiving)</strong></td>
+                    <td>Develop system to reduce memory bandwidth limits for CPU IVF.</td>
                 </tr>
                 <tr>
-                    <td><strong>Week 5 (November 29th - December 5th)</strong></td>
-                    <td>Add multi-GPU support and further optimized delete compactor and write buffer.</td>
+                    <td><strong>Week 5 Part 1 (November 29th - December 1st)</strong></td>
+                    <td>Add a skew handler for GPU parallelism.</td>
+                </tr>
+                <tr>
+                    <td><strong>Week 5 Part 2 (November 2nd - December 5th)</strong></td>
+                    <td>Benchmark GPU IVF under high skew workloads.</td>
                 </tr>
                 <tr>
                     <td><strong>Week 6 (December 6th - December 12th)</strong></td>
