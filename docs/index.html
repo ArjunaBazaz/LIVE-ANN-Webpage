@@ -235,13 +235,26 @@
             Afterwards, we implemented a shared address space request level parallel approach. This handles parallelism by splitting up requests between processors. Each request is fully handled by a single processor.
             This implementation led to speedups of 3-4x when running on 8 threads. However, this would work solely if the clusters fit in memory, which is not guaranteed on large systems.
         </p>
+        <img src="img/Shared Memory - Speedup Chart based on Skew.png" alt="Shared Memory">
+        <img src="img/Shared Memory - Speedup Chart based on Skew_2.png" alt="Shared Memory 2">
+        <p>
+            The reduced parallelism, upon investigation, is likely due to low computation to communication ratio. The L2 distance performs three computations (1 subtraction, 1 multiplication, and 1 addition) per dimension.
+            It communicates 4 bytes per dimension, giving us 0.75 FLOPS/byte. This can cause a memory bandwidth limit on the memory bus. Further evidence of this is that high skew workloads, where cores read the same clusers repeatedly,
+            have a much higher throughput. One solution to this is to batch queries, allowing for only one read from memory for each point, and then calculating L2 distance across all of the points. In order to preserve within process sequential
+            consistency, the queries will be batch up until a read or delete, to ensure that queries do not occur before inserts that should be performed before it. An example of how requests are blocked is below.
+        </p>
+        <img src="img/batched_structure.png" alt="Batched Structure">
+        <p>
+            When examining the throughput and speedup compared to the shared memory system, this system acheives much higher speedup at low skews, where parallelism of the non-batched approach is low.
+            Graphs highlighting the speedup can be seen below. Here, we see that skew has a much smaller affect on speedup compared to the previous approach. In addition, throughput overall is higher.
+        </p>
+        <img src="img/Batched Shared Memory - Throughput Analysis.png" alt="Batched">
+        <img src="img/Batched Shared Memory - Throughput Analysis_2.png" alt="Batched 2">
         <p>
             To address this, we developed an MPI approach that keeps clusters local to specific processors. When a request comes into a specific processor. It determines the clusters to examine, and then sends the request to handle to a specific
             processor, and gets the results back using MPI messages. This acheives roughly 50% the throughput of the shared address space approach, since communicating entire 512 byte points are expensive.
             Speedup graphs showing results are below.
         </p>
-        <img src="img/Shared Memory - Speedup Chart based on Skew.png" alt="Shared Memory">
-        <img src="img/Shared Memory - Speedup Chart based on Skew_2.png" alt="Shared Memory 2">
         <p>
             We also did specific testing for high skew workloads, since requests often come in to specific clusters, we decided to generate workloads using a high zipfian skew.
             This produced results that often access a single cluster. This degrades performance in the shared address space case as a result of lock contention, and reduces parallelism
